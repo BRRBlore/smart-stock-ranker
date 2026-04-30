@@ -1,0 +1,133 @@
+# ============================================================
+# daily_refresh.yml — Bapi's Smart Stock Ranker V2
+# ============================================================
+# Schedule: 4:00 AM IST = 10:30 PM UTC (previous day)
+#
+# Data sources — 100% automated, NO manual files needed:
+#   Universe : NSE official EQUITY_L.csv (free, no login)
+#   Prices   : yfinance (free)
+#   Fundamentals: screener.in scraping (free, rate-limited)
+#
+# Flow:
+#   1. Download EQUITY_L.csv from NSE → discover all stocks > ₹500 Cr
+#   2. Fetch market caps via yfinance to filter by size
+#   3. Scrape prices + fundamentals for all stocks
+#   4. Score with 4-pillar engine
+#   5. Commit cloud_data.csv → Streamlit auto-redeploys
+# ============================================================
+
+name: Daily Data Refresh
+
+on:
+  schedule:
+    - cron: '30 22 * * *'   # 10:30 PM UTC = 4:00 AM IST
+
+  workflow_dispatch:
+    inputs:
+      force_full_scrape:
+        description: 'Force re-scrape ALL stocks'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    permissions:
+      contents: write
+
+    steps:
+
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🐍 Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 📦 Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: 📁 Prepare data directory
+        run: mkdir -p data
+
+      - name: 🗄️ Initialise database
+        run: |
+          python - <<'PYEOF'
+          from database import init_db
+          init_db()
+          print("Database ready")
+          PYEOF
+
+      - name: 🔍 Discover universe from NSE EQUITY_L.csv
+        run: |
+          python - <<'PYEOF'
+          from database import init_db
+          from auto_universe import update_universe
+          init_db()
+          # NSE official source — no screener CSV needed
+          added = update_universe(min_mcap=500, max_mcap=9_999_999)
+          print(f"Universe updated: {added} new stocks added")
+          PYEOF
+
+      - name: 📊 Show universe size
+        run: |
+          python - <<'PYEOF'
+          from database import get_universe
+          df = get_universe()
+          print(f"Total universe: {len(df)} stocks")
+          if not df.empty and 'sector' in df.columns:
+              print(df['sector'].value_counts().head(10).to_string())
+          PYEOF
+
+      - name: 🚀 Scrape prices + fundamentals
+        run: python batch_scraper.py
+        env:
+          FORCE_SCRAPE: ${{ github.event.inputs.force_full_scrape || 'false' }}
+
+      - name: 💾 Export to cloud_data.csv
+        run: python export_to_csv.py
+
+      - name: 📈 Summary
+        run: |
+          python - <<'PYEOF'
+          import sqlite3, pandas as pd
+          from pathlib import Path
+          if Path("data/smart_ranker.db").exists():
+              conn = sqlite3.connect("data/smart_ranker.db")
+              total = pd.read_sql(
+                  "SELECT COUNT(*) as n FROM stocks WHERE scrape_status='done'",
+                  conn).iloc[0]["n"]
+              signals = pd.read_sql("""
+                  SELECT value_signal, COUNT(*) as n
+                  FROM stocks WHERE scrape_status='done'
+                  GROUP BY value_signal ORDER BY n DESC
+              """, conn)
+              print(f"\n{'='*45}")
+              print(f"  Stocks scored today: {total}")
+              print(signals.to_string(index=False))
+              print(f"{'='*45}")
+          PYEOF
+
+      - name: 🔁 Commit and push
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "Smart Ranker Bot"
+          git add data/cloud_data.csv
+          if git diff --staged --quiet; then
+            echo "No changes — skipping commit"
+          else
+            TIMESTAMP=$(TZ='Asia/Kolkata' date '+%Y-%m-%d %H:%M IST')
+            git commit -m "Auto refresh: ${TIMESTAMP} [skip ci]"
+            git push
+            echo "✅ Pushed — Streamlit will redeploy in ~60s"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

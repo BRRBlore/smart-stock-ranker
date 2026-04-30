@@ -1,0 +1,10 @@
+venv/
+data/smart_ranker.db
+data/alerts.db
+data/screener_cache.csv
+__pycache__/
+*.pyc
+.env
+.vscode/
+!data/cloud_data.csv
+!data/screener_export.csv
