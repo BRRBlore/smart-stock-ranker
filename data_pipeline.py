@@ -126,18 +126,17 @@ def _scrape_screener(screener_id, pb_hint: float = 0.0):
             if any(x in label for x in ["stock p/e","p/e ratio","price to earning"]):
                 result["PE"] = value
 
-            # P/B — screener.in shows this as "Book Value" in the ratio list
-            # The value shown IS the Price-to-Book ratio (CMP / Book Value per share)
-            # Labels seen in the wild:
-            #   "Book Value"        → this is BVPS, NOT PB — skip
-            #   "Price to Book"     → PB ✓
-            #   "P/B"               → PB ✓
-            #   "CMP / BV"          → PB ✓  (screener export column name)
-            elif any(x in label for x in ["price to book","cmp / bv","p/b ratio"]):
+            # P/B — screener.in shows several labels depending on page version:
+            #   "Price to Book"  → PB ratio ✓
+            #   "CMP / BV"       → PB ratio ✓
+            #   "P/B Ratio"      → PB ratio ✓
+            #   "P/B"            → PB ratio ✓
+            #   "Book Value"     → BVPS in rupees (used to DERIVE PB below)
+            elif any(x in label for x in ["price to book","cmp / bv","p/b ratio","p/b"]):
                 result["PB"] = value
-            elif label == "p/b":
-                result["PB"] = value
-            # "Book Value" alone is BVPS (rupees), not the ratio — skip it
+            elif label == "book value" and value > 0:
+                # Store BVPS so we can derive PB = Price / BVPS later
+                result["_bvps"] = value
 
             elif any(x in label for x in ["roe","return on equity","return on net worth"]):
                 result["RoE"] = value
@@ -148,17 +147,37 @@ def _scrape_screener(screener_id, pb_hint: float = 0.0):
             elif "market cap" in label:
                 result["Market_Cap_Cr"] = value
 
+        # ── PB derivation from BVPS ───────────────────────────────────────────
+        # If PB ratio not found directly, derive from Price / Book Value Per Share
+        if result["PB"] == 0.0 and result.get("_bvps", 0) > 0:
+            price = result.get("Price", 0)
+            if price > 0:
+                result["PB"] = round(price / result["_bvps"], 2)
+        result.pop("_bvps", None)  # clean up temp field
+
         # ── PB page-wide fallback scan ────────────────────────────────────────
-        # Only try if pb_hint wasn't available and scrape also returned 0
         if result["PB"] == 0.0:
             for tag in soup.find_all(["td","th","span","b","li"]):
                 txt = tag.get_text(strip=True).lower()
-                if txt in ("price to book","p/b value","price/book","p/b ratio","cmp/bv"):
+                if txt in ("price to book","p/b value","price/book","p/b ratio","cmp/bv","cmp / bv"):
                     sib = tag.find_next_sibling() or tag.parent.find_next_sibling()
                     if sib:
                         val = _parse_num(sib.get_text(strip=True))
                         if 0 < val < 300:
                             result["PB"] = val
+                            break
+        # ── Final PB fallback: derive from CMP / Book Value anywhere on page ──
+        if result["PB"] == 0.0:
+            # Try to find any element with label containing book value next to a number
+            for tag in soup.find_all(["td","span","b"]):
+                txt = tag.get_text(strip=True).lower()
+                if "book value" in txt and "per share" not in txt:
+                    sib = tag.find_next_sibling() or tag.parent.find_next_sibling()
+                    if sib:
+                        val = _parse_num(sib.get_text(strip=True))
+                        price = result.get("Price", 0)
+                        if val > 0 and price > 0 and val < price:  # sanity: BVPS < Price
+                            result["PB"] = round(price / val, 2)
                             break
 
         # ── Revenue growth ────────────────────────────────────────────────────
