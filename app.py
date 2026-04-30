@@ -343,10 +343,13 @@ with t3:
             .reset_index()
             .sort_values("Avg_Score", ascending=False)
         )
+        # Cast all numeric columns to plain float — avoids nullable Int64 issues with Plotly + pandas 3.0
+        for col in ["Avg_Score","Count","Avg_PE","Avg_RoE","Buy_Count"]:
+            sector_stats[col] = pd.to_numeric(sector_stats[col], errors="coerce").fillna(0).astype(float)
         sector_stats["Avg_Score"] = sector_stats["Avg_Score"].round(1)
         sector_stats["Avg_PE"]    = sector_stats["Avg_PE"].round(1)
         sector_stats["Avg_RoE"]   = sector_stats["Avg_RoE"].round(1)
-        sector_stats["Buy_%"]     = (sector_stats["Buy_Count"].astype(float) / sector_stats["Count"].astype(float) * 100).round(0)
+        sector_stats["Buy_%"]     = (sector_stats["Buy_Count"] / sector_stats["Count"] * 100).round(0)
 
         # Heat map bar chart
         fig = px.bar(
