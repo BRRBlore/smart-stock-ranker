@@ -346,7 +346,7 @@ with t3:
         sector_stats["Avg_Score"] = sector_stats["Avg_Score"].round(1)
         sector_stats["Avg_PE"]    = sector_stats["Avg_PE"].round(1)
         sector_stats["Avg_RoE"]   = sector_stats["Avg_RoE"].round(1)
-        sector_stats["Buy_%"]     = (sector_stats["Buy_Count"] / sector_stats["Count"] * 100).round(0)
+        sector_stats["Buy_%"]     = (sector_stats["Buy_Count"].astype(float) / sector_stats["Count"].astype(float) * 100).round(0)
 
         # Heat map bar chart
         fig = px.bar(
