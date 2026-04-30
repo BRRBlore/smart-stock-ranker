@@ -22,16 +22,25 @@ def export():
 
     conn = sqlite3.connect(str(DB_PATH))
 
-    # Pull all scored stocks
+    # Pull all scraped stocks
     df = pd.read_sql(
-        "SELECT * FROM stocks WHERE scrape_status='done' ORDER BY composite_score DESC",
+        "SELECT * FROM stocks WHERE scrape_status='done'",
         conn
     )
     conn.close()
 
     if df.empty:
-        print("[WARNING] No scored stocks found in database.")
+        print("[WARNING] No scraped stocks found in database.")
         return False
+
+    # Score ALL stocks together in one pass — this is the correct approach.
+    # Scoring one stock at a time (in batch_scraper) produces wrong results
+    # because ranks and relative factors are meaningless on a single row.
+    print(f"Scoring {len(df)} stocks in bulk...")
+    from scoring import calculate_score
+    df = calculate_score(df)
+    df = df.sort_values("composite_score", ascending=False).reset_index(drop=True)
+    print(f"Scoring complete. Score range: {df['composite_score'].min():.1f} – {df['composite_score'].max():.1f}")
 
     # Add metadata
     df["exported_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")

@@ -64,6 +64,21 @@ def _rename(df):
     df.columns = [COL_MAP.get(c, c) for c in df.columns]
     return df
 
+def _score_then_rename(df):
+    """
+    Score FIRST using raw lowercase column names (as they come from SQLite/CSV),
+    THEN rename for display. Never use pre-computed scores from CSV — they may
+    have been computed when data was incomplete (all zeros = constant 42.6).
+    Always re-derive scores fresh from the raw fundamental columns.
+    """
+    df = df.copy()
+    # Always re-score from raw data — this ensures correct scores
+    # even if cloud_data.csv has stale/constant composite_score values
+    df = calculate_score(df)
+    # Rename columns for display AFTER scoring
+    df.columns = [COL_MAP.get(c, c) for c in df.columns]
+    return df
+
 # ── Data loading ──────────────────────────────────────────────────────────────
 @st.cache_data(ttl=300)
 def load_data() -> pd.DataFrame:
@@ -72,21 +87,21 @@ def load_data() -> pd.DataFrame:
         try:
             df = get_all_stocks()
             if not df.empty:
-                df = _rename(df)
-                if "Score" not in df.columns:
-                    df = calculate_score(df)
-                return df.sort_values("Score", ascending=False).reset_index(drop=True)
+                df = _score_then_rename(df)
+                sort_col = "Score" if "Score" in df.columns else "composite_score"
+                return df.sort_values(sort_col, ascending=False).reset_index(drop=True)
         except Exception:
             pass
     # 2. cloud_data.csv
     if os.path.exists(CLOUD_CSV):
         try:
             df = pd.read_csv(CLOUD_CSV)
-            df = _rename(df)
-            if "Score" not in df.columns:
-                df = calculate_score(df)
-            return df.sort_values("Score", ascending=False).reset_index(drop=True)
-        except Exception:
+            # Score FIRST (needs lowercase col names), THEN rename for display
+            df = _score_then_rename(df)
+            sort_col = "Score" if "Score" in df.columns else "composite_score"
+            return df.sort_values(sort_col, ascending=False).reset_index(drop=True)
+        except Exception as e:
+            import traceback; traceback.print_exc()
             pass
     return pd.DataFrame()
 

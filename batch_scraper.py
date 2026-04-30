@@ -187,13 +187,10 @@ def _scrape_one(meta: dict) -> dict | None:
     raw.update(_compute_fii_dii_flags(raw))
     raw.update(_compute_value_zones(raw, sector))
 
-    # Score (needs a DataFrame)
-    df_single  = pd.DataFrame([raw])
-    df_scored  = calculate_score(df_single)
-    scored_raw = df_scored.iloc[0].to_dict()
-
-    # Normalise keys to schema format — this is the key fix
-    db_row = _normalise_row(scored_raw)
+    # Do NOT score here — scoring one row at a time produces wrong results
+    # (ranks, relative momentum are meaningless on a single row).
+    # Scoring happens in bulk in export_to_csv.py over the full dataset.
+    db_row = _normalise_row(raw)
     db_row["scrape_status"] = "done"
 
     return db_row
